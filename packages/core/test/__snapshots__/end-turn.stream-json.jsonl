@@ -1,0 +1,6 @@
+{"type":"system","subtype":"api_call_start","turn":1}
+{"type":"system","subtype":"api_call_end","turn":1,"durationMs":0}
+{"type":"system","subtype":"turn_tokens","turn":1,"prompt_tokens":0,"completion_tokens":0,"cumulative_tokens":0}
+{"type":"assistant","message":{"content":[{"type":"text","text":"all done"}],"stop_reason":"end_turn","usage":{"input_tokens":0,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}
+{"type":"system","subtype":"session_diagnostics","total_turns":1,"total_tokens":0,"input_tokens":0,"output_tokens":0,"tool_histogram":{},"max_tool_latency_ms":0,"stuck_loop_trips":0,"stop_reason":"end_turn","duration_api_ms":0}
+{"type":"result","subtype":"success","stop_reason":"end_turn","result":"all done","total_cost_usd":0,"usage":{"input_tokens":0,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0},"provider":"openai","provider_used":"openai","model_used":"test-model","model_requested":"test-model","modelUsage":{"test-model":{"input_tokens":0,"output_tokens":0}},"duration_api_ms":0,"num_turns":1,"system_prompt_bytes":0,"mcp_server_count":0,"mcp_server_breakdown":[],"tool_call_count":0,"mcp_tool_call_count":0,"tool_result_count":0}

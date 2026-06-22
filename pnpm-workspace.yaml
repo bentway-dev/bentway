@@ -1,0 +1,19 @@
+packages:
+  - 'packages/*'
+
+injectWorkspacePackages: true
+
+# Vitest 3 pulls esbuild as a transitive (the Vite bundler used to transform
+# .ts test files at runtime). esbuild's postinstall relocates its platform
+# binary; without this, vitest fails to load.
+allowBuilds:
+  esbuild: true
+
+# Disable pnpm 11's minimumReleaseAge supply-chain gate. It rejects packages
+# published within a recent window (default ~24h) and enforces this even on
+# `pnpm install --frozen-lockfile`, which makes frozen installs time-dependent:
+# the same committed lockfile passes one day and fails the next as fast-moving
+# transitive deps fall inside the cutoff. Our committed pnpm-lock.yaml is the
+# trust boundary; CI needs deterministic frozen installs, so the age gate is
+# turned off here.
+minimumReleaseAge: 0

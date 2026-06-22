@@ -1,0 +1,4 @@
+{ "extends": "./api-extractor-base.json",
+  "mainEntryPointFilePath": "<projectFolder>/dist/transcript.d.mts",
+  "apiReport": { "reportFileName": "core.transcript.api.md" }
+}

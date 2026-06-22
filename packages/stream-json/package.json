@@ -1,0 +1,52 @@
+{
+  "name": "@bentway/stream-json",
+  "version": "0.1.0",
+  "description": "Provider-neutral stream-json event projection for LLM agent loops",
+  "keywords": [
+    "bentway",
+    "llm",
+    "agent",
+    "stream-json",
+    "observability"
+  ],
+  "homepage": "https://github.com/bentway-dev/bentway#readme",
+  "bugs": {
+    "url": "https://github.com/bentway-dev/bentway/issues"
+  },
+  "license": "Apache-2.0",
+  "author": "Nathan Sentjens <nate@bentway.dev>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bentway-dev/bentway.git",
+    "directory": "packages/stream-json"
+  },
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "default": "./src/index.mjs"
+    }
+  },
+  "files": [
+    "src",
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepare": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "bash scripts/check-file-sizes.sh && bash scripts/check-api-report.sh"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}

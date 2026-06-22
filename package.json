@@ -1,0 +1,25 @@
+{
+  "name": "bentway",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.5.1",
+  "scripts": {
+    "build": "pnpm -r --filter \"./packages/*\" run build",
+    "test:gates": "pnpm -r --filter \"./packages/*\" run test",
+    "test:hygiene": "node scripts/check-comment-hygiene.mjs",
+    "test:typecheck": "tsc -p tsconfig.typecheck-tests.json",
+    "test:unit": "vitest run",
+    "test": "pnpm run test:gates && pnpm run test:hygiene && pnpm run test:typecheck && pnpm run test:unit"
+  },
+  "devDependencies": {
+    "@bentway/anthropic": "workspace:*",
+    "@bentway/core": "workspace:*",
+    "@bentway/llama": "workspace:*",
+    "@bentway/openai": "workspace:*",
+    "@bentway/stream-json": "workspace:*",
+    "@microsoft/api-extractor": "^7.58.9",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

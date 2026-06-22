@@ -1,0 +1,4 @@
+{ "extends": "./api-extractor-base.json",
+  "mainEntryPointFilePath": "<projectFolder>/dist/normalize/retryable.d.mts",
+  "apiReport": { "reportFileName": "core.normalize-retryable.api.md" }
+}

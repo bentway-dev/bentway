@@ -1,0 +1,4 @@
+{ "extends": "./api-extractor-base.json",
+  "mainEntryPointFilePath": "<projectFolder>/dist/tool-exec.d.mts",
+  "apiReport": { "reportFileName": "core.tool-exec.api.md" }
+}

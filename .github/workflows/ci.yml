@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      # The org-specific hygiene supplement is only available on trusted pushes
+      # (the secret isn't exposed to fork PRs). HYGIENE_REQUIRE_LOCAL gates
+      # the gate's strict-fail behavior; see scripts/check-comment-hygiene.mjs.
+      HYGIENE_LOCAL_RULES: ${{ secrets.HYGIENE_LOCAL_RULES }}
+      HYGIENE_REQUIRE_LOCAL: ${{ github.event_name == 'push' && '1' || '' }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: corepack prepare pnpm@11.5.1 --activate
+      - run: pnpm install --frozen-lockfile
+      - name: Materialize hygiene supplement (when available)
+        run: |
+          if [ -n "$HYGIENE_LOCAL_RULES" ]; then
+            printf "%s" "$HYGIENE_LOCAL_RULES" > .hygiene-local.mjs
+            echo "supplement materialized from secret"
+          else
+            echo "no hygiene supplement available (fork PR) — generic-only"
+          fi
+      - run: pnpm -r build
+      - run: pnpm test

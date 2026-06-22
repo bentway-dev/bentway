@@ -1,0 +1,4 @@
+{ "extends": "./api-extractor-base.json",
+  "mainEntryPointFilePath": "<projectFolder>/dist/normalize/stop-reason.d.mts",
+  "apiReport": { "reportFileName": "core.normalize-stop-reason.api.md" }
+}

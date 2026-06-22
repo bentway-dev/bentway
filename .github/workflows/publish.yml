@@ -1,0 +1,36 @@
+name: Publish
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  id-token: write          # enables npm OIDC trusted publishing + provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          # NOTE: deliberately NO registry-url. setup-node's registry-url option
+          # injects an `${NODE_AUTH_TOKEN}` line into a generated .npmrc, and
+          # an empty NODE_AUTH_TOKEN DEFEATS OIDC trusted publishing. Tokenless
+          # publishing needs no token configured at all.
+      - run: corepack enable
+      - run: corepack prepare pnpm@11.5.1 --activate
+      # OIDC trusted publishing needs npm >= 11.5.1; node:22 ships npm 10.x.
+      - run: npm install -g npm@latest
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+      - name: Pack + publish (topological)
+        run: |
+          mkdir -p /tmp/bw-out
+          # stream-json -> core -> ports, to avoid a dependent-404 window.
+          for p in stream-json core anthropic openai llama; do
+            ( cd "packages/$p" && pnpm pack --pack-destination /tmp/bw-out )
+            npm publish /tmp/bw-out/bentway-$p-*.tgz --access public
+          done

@@ -1,0 +1,4 @@
+{ "extends": "./api-extractor-base.json",
+  "mainEntryPointFilePath": "<projectFolder>/dist/turn-loop.d.mts",
+  "apiReport": { "reportFileName": "core.turn-loop.api.md" }
+}

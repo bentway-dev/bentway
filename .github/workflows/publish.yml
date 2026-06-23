@@ -20,6 +20,11 @@ jobs:
           # injects an `${NODE_AUTH_TOKEN}` line into a generated .npmrc, and
           # an empty NODE_AUTH_TOKEN DEFEATS OIDC trusted publishing. Tokenless
           # publishing needs no token configured at all.
+          # v5 turns on auto-caching when package.json has `packageManager`,
+          # but pnpm isn't on PATH yet (corepack runs below) → cache step
+          # fails. Disable to match v4's behavior; revisit when restructuring
+          # the workflow to install pnpm before setup-node.
+          package-manager-cache: false
       - run: corepack enable
       - run: corepack prepare pnpm@11.5.1 --activate
       # OIDC trusted publishing needs npm >= 11.5.1; node:22 ships npm 10.x.

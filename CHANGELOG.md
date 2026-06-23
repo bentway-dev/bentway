@@ -2,6 +2,15 @@
 
 Notable changes are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — 2026-06-23
+
+### Added
+- `ctx.initialState` in `@bentway/core/turn-loop`: optional seeded `Checkpoint` that restores the loop's transcript and cross-turn state (`numTurns`, `totalUsage`, `previousResponseId`, the cumulative counters, the intervention flags) so a fresh process can continue a prior session at the next turn boundary. Omitted → behavior is identical to 0.3.0 (the loop builds its transcript fresh from `prompt`).
+- `ctx.onTurnComplete?(checkpoint)` in `@bentway/core/turn-loop`: optional turn-boundary observer invoked at the bottom of each productive turn with the full `Checkpoint`. The host owns persistence cadence and storage; the loop only emits.
+- `Checkpoint` type exported from `@bentway/core/turn-loop`: the typed contract a host persists and restores against — pure data, JSON-round-trippable.
+
+No breaking changes. With neither field set, the 5 stream-json byte-identity goldens are unchanged.
+
 ## [0.3.0] — 2026-06-22
 
 ### Added

@@ -1,6 +1,6 @@
 {
   "name": "@bentway/stream-json",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Provider-neutral stream-json event projection for LLM agent loops",
   "keywords": [
     "bentway",

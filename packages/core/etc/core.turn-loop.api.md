@@ -5,6 +5,22 @@
 ```ts
 
 // @public
+export type Checkpoint = {
+    transcript: {
+        messages: Array<object>;
+    };
+    previousResponseId?: string | undefined;
+    numTurns: number;
+    totalUsage: Record<string, number>;
+    lastText: string;
+    toolCallCount: number;
+    mcpToolCallCount: number;
+    toolResultCount: number;
+    bareBailIntervened: boolean;
+    noToolCallStreak: number;
+};
+
+// @public
 export function runTurnLoop(ctx: any): Promise<any>;
 
 // (No @packageDocumentation comment for this package)

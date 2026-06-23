@@ -1,6 +1,6 @@
 {
   "name": "@bentway/core",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Runtime-agnostic execution kernel for LLM agents: turn loop, neutral transcript, tool-call dispatch, and provider-agnostic stop/retry semantics",
   "keywords": [
     "bentway",

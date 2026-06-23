@@ -9,6 +9,17 @@ injectWorkspacePackages: true
 allowBuilds:
   esbuild: true
 
+# Force esbuild to the patched range. The chain vitest@3 -> vite@7.3.5
+# -> esbuild@^0.27.0 keeps the tree on esbuild 0.27.x, which is affected by
+# GHSA-g7r4-m6w7-qqqr (low; Windows dev-server path traversal; patched in
+# 0.28.1). Dependabot's security-update job couldn't find a compatible
+# upgrade through that chain on its own. Remove this override when vitest
+# (or vite) naturally bumps to a chain that resolves 0.28.1+ without help.
+# pnpm config has to live here, not in package.json's `pnpm` field, which
+# is ignored as of pnpm 11.
+overrides:
+  esbuild: '^0.28.1'
+
 # Disable pnpm 11's minimumReleaseAge supply-chain gate. It rejects packages
 # published within a recent window (default ~24h) and enforces this even on
 # `pnpm install --frozen-lockfile`, which makes frozen installs time-dependent:

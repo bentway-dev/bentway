@@ -1,6 +1,6 @@
 {
   "name": "@bentway/core",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Runtime-agnostic execution kernel for LLM agents: turn loop, neutral transcript, tool-call dispatch, and provider-agnostic stop/retry semantics",
   "keywords": [
     "bentway",
@@ -35,6 +35,14 @@
       "types": "./dist/tool-exec.d.mts",
       "default": "./src/tool-exec.mjs"
     },
+    "./events": {
+      "types": "./dist/events.d.mts",
+      "default": "./src/events.mjs"
+    },
+    "./usage": {
+      "types": "./dist/usage.d.mts",
+      "default": "./src/usage.mjs"
+    },
     "./normalize/stop-reason": {
       "types": "./dist/normalize/stop-reason.d.mts",
       "default": "./src/normalize/stop-reason.mjs"
@@ -61,9 +69,6 @@
     "prepare": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "bash scripts/check-file-sizes.sh && bash scripts/check-api-report.sh"
-  },
-  "dependencies": {
-    "@bentway/stream-json": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

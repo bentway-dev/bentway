@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# @bentway/core has 5 export subpaths (one per package.json `exports` entry),
-# so 5 api-extractor configs. The gate runs all 5; any drift fails.
+# @bentway/core has 7 export subpaths (one per package.json `exports` entry),
+# so 7 api-extractor configs. The gate runs all 7; any drift fails.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -12,7 +12,7 @@ if [ ! -d dist ]; then
   exit 1
 fi
 
-for sub in turn-loop transcript tool-exec normalize-stop-reason normalize-retryable; do
+for sub in turn-loop transcript tool-exec events usage normalize-stop-reason normalize-retryable; do
   ../../node_modules/.bin/api-extractor run --config "api-extractor.${sub}.json"
 done
-echo "check-api-report: public API matches committed snapshot (5 entry points)."
+echo "check-api-report: public API matches committed snapshot (7 entry points)."

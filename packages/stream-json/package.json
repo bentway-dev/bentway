@@ -1,6 +1,6 @@
 {
   "name": "@bentway/stream-json",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Provider-neutral stream-json event projection for LLM agent loops",
   "keywords": [
     "bentway",
@@ -44,6 +44,9 @@
     "prepare": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "bash scripts/check-file-sizes.sh && bash scripts/check-api-report.sh"
+  },
+  "dependencies": {
+    "@bentway/core": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

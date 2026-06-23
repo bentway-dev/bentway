@@ -4,9 +4,6 @@
 
 ```ts
 
-// @public
-export function accumulateUsage(accumulated: any, turnUsage: any): any;
-
 // @public (undocumented)
 export function assistantTextEvent(text: any, usage: any, stopReason?: string): {
     type: string;
@@ -120,6 +117,9 @@ export function projectUsageForStreamJson(usage: any): {
     cacheCreationInputTokens: any;
     reasoningTokens: any;
 };
+
+// @public
+export function streamJsonSink(writer?: (line: string) => unknown): (event: any) => void;
 
 // @public
 export function summarizeToolResult(result: any): string;

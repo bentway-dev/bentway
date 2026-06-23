@@ -20,20 +20,27 @@ npm install @bentway/anthropic @bentway/openai @bentway/llama
 
 ## Usage
 
-The package has five entry points; import only what you need.
+The package has seven entry points; import only what you need.
 
 ```js
 import { runTurnLoop } from '@bentway/core/turn-loop';
 import * as transcript from '@bentway/core/transcript';
 import { executeFunctionCall } from '@bentway/core/tool-exec';
+import * as events from '@bentway/core/events';
+import { accumulateUsage } from '@bentway/core/usage';
 import { normalizeStopReason, STOP_REASONS } from '@bentway/core/normalize/stop-reason';
 import { isRetryableApiError } from '@bentway/core/normalize/retryable';
+
+import { streamJsonSink } from '@bentway/stream-json';
 
 const exitCode = await runTurnLoop({
   model: 'claude-opus-4-8',
   prompt: 'do the task',
   runtimeTools: { tools: [], executors: new Map() },
-  emitter: (line) => process.stdout.write(line),
+  // The loop emits neutral events (see @bentway/core/events) to `emitter`.
+  // Wire a sink to project them to a concrete wire format — here, the
+  // stream-json line-delimited JSON projection.
+  emitter: streamJsonSink((line) => process.stdout.write(line)),
   provider: 'anthropic',
   // ...plus the host's complete() port, serializeRequest closure,
   // cost-computer, and policy hooks. See AGENTS.md for the full ctx shape.

@@ -10,10 +10,13 @@
 // Tests assert on emitted events (via a capturing emitter) and the loop's
 // numeric return (the exit code).
 //
-// Imports only @bentway/core.
+// The loop emits neutral events (see @bentway/core/events); the host wires
+// a sink. The harness wires the REAL @bentway/stream-json `streamJsonSink`
+// so the captured bytes the goldens compare are production bytes.
 
 import { runTurnLoop } from '@bentway/core/turn-loop';
 import * as transcript from '@bentway/core/transcript';
+import { streamJsonSink } from '@bentway/stream-json';
 
 export { transcript };
 
@@ -144,15 +147,25 @@ export function scriptedPort(script: Step[]) {
 // ── Event capture ──────────────────────────────────────────────────────────
 
 export type CapturedEvent = Record<string, unknown>;
+export type NeutralEvent = { tag: string; [k: string]: unknown };
 
 export function makeCapture() {
   const lines: string[] = [];
-  const emitter = (line: string) => { lines.push(line); };
+  const neutral: NeutralEvent[] = [];
+  // Tap neutral events as they pass through, then render to bytes via the
+  // REAL stream-json sink so goldens compare production wire bytes.
+  const lineCollector = (line: string) => { lines.push(line); };
+  const render = streamJsonSink(lineCollector);
+  const emitter = (event: NeutralEvent) => {
+    neutral.push(event);
+    render(event);
+  };
   const events = (): CapturedEvent[] => lines.map((l) => JSON.parse(l) as CapturedEvent);
   return {
     emitter,
     raw: () => lines.join(''),
     events,
+    neutralEvents: () => neutral,
     resultEvents: () => events().filter((e) => e.type === 'result'),
     resultEvent: () => events().find((e) => e.type === 'result'),
     diagEvent: () => events().find((e) => e.subtype === 'session_diagnostics'),

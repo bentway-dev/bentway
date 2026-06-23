@@ -4,8 +4,9 @@
 // in @bentway/core/transcript.
 //
 // This module owns: the line writer (`emit`), the assistant/user/tool/result
-// event builders, the usage shape the events carry, and a per-turn usage
-// accumulator (`accumulateUsage`).
+// event builders, the usage shape the events carry, and the sink factory
+// (`streamJsonSink`) that consumes @bentway/core's neutral events and
+// renders them to the line-delimited JSON wire format.
 //
 // Provider usage shape: events carry an OpenAI-INCLUSIVE convention
 // (`input_tokens` includes cached input tokens; cache hits surface as
@@ -66,33 +67,6 @@ export function projectUsageForStreamJson(usage) {
     cachedInputTokens,
     cacheCreationInputTokens,
     reasoningTokens,
-  };
-}
-
-/** Accumulate per-turn provider usage into a running session total. */
-export function accumulateUsage(accumulated, turnUsage) {
-  const turn = turnUsage || {};
-  if (!accumulated || !Object.keys(accumulated).length) {
-    return { ...turn };
-  }
-  return {
-    input_tokens: (accumulated.input_tokens || 0) + (turn.input_tokens || 0),
-    output_tokens: (accumulated.output_tokens || 0) + (turn.output_tokens || 0),
-    input_tokens_details: {
-      cached_tokens:
-        (accumulated.input_tokens_details?.cached_tokens || 0) +
-        (turn.input_tokens_details?.cached_tokens || 0),
-      // Fold the write tier next to the read tier. Providers that don't
-      // emit cache_creation_tokens accumulate to 0.
-      cache_creation_tokens:
-        (accumulated.input_tokens_details?.cache_creation_tokens || 0) +
-        (turn.input_tokens_details?.cache_creation_tokens || 0),
-    },
-    output_tokens_details: {
-      reasoning_tokens:
-        (accumulated.output_tokens_details?.reasoning_tokens || 0) +
-        (turn.output_tokens_details?.reasoning_tokens || 0),
-    },
   };
 }
 
@@ -205,5 +179,92 @@ export function toolResultEvent({ callId, output, isError = false }) {
         is_error: isError,
       }],
     },
+  };
+}
+
+/**
+ * Build a sink that consumes @bentway/core's neutral events (see
+ * @bentway/core/events) and writes line-delimited stream-json bytes to
+ * `writer`. The host wires this as `runTurnLoop`'s `emitter` ctx field.
+ *
+ * Each event tag renders to the exact bytes the loop emitted before the
+ * core→stream-json inversion — same field names, same field order. The
+ * @bentway/core goldens enforce this byte-identity.
+ *
+ * @param {(line: string) => unknown} [writer]
+ */
+export function streamJsonSink(writer = process.stdout.write.bind(process.stdout)) {
+  return function onEvent(event) {
+    switch (event.tag) {
+      case 'apiCallStart':
+        return emit({
+          type: 'system',
+          subtype: 'api_call_start',
+          turn: event.turn,
+        }, writer);
+      case 'apiCallEnd':
+        return emit({
+          type: 'system',
+          subtype: 'api_call_end',
+          turn: event.turn,
+          durationMs: event.durationMs,
+        }, writer);
+      case 'apiRetry':
+        return emit({
+          type: 'system',
+          subtype: 'api_retry',
+          attempt: event.attempt,
+          maxRetries: event.maxRetries,
+          delayMs: event.delayMs,
+          error: event.error,
+        }, writer);
+      case 'turnTokens':
+        return emit({
+          type: 'system',
+          subtype: 'turn_tokens',
+          turn: event.turn,
+          prompt_tokens: event.promptTokens,
+          completion_tokens: event.completionTokens,
+          cumulative_tokens: event.cumulativeTokens,
+        }, writer);
+      case 'toolLatency':
+        return emit({
+          type: 'system',
+          subtype: 'tool_latency',
+          tool: event.tool,
+          duration_ms: event.durationMs,
+          output_bytes: event.outputBytes,
+          ...(event.isError ? { is_error: true } : {}),
+        }, writer);
+      case 'sessionDiagnostics':
+        return emit({
+          type: 'system',
+          subtype: 'session_diagnostics',
+          total_turns: event.totalTurns,
+          total_tokens: event.totalTokens,
+          input_tokens: event.inputTokens,
+          output_tokens: event.outputTokens,
+          tool_histogram: event.toolHistogram,
+          max_tool_latency_ms: event.maxToolLatencyMs,
+          // Extras land between max_tool_latency_ms and stuck_loop_trips so
+          // the overall field order stays stable across hosts.
+          ...(event.extras ?? {}),
+          stuck_loop_trips: event.stuckLoopTrips,
+          stop_reason: event.stopReason,
+          duration_api_ms: event.durationApiMs,
+        }, writer);
+      case 'assistantText':
+        return emit(assistantTextEvent(event.text, event.usage, event.stopReason), writer);
+      case 'assistantToolUse':
+        return emit(assistantToolUseEvent(event.call, event.usage), writer);
+      case 'toolResult':
+        return emit(toolResultEvent({
+          callId: event.callId,
+          output: event.output,
+          isError: event.isError ?? false,
+        }), writer);
+      case 'result':
+        return emit(buildResultEvent(event), writer);
+    }
   };
 }

@@ -16,11 +16,14 @@ Swap or add `@bentway/openai`, `@bentway/llama` to target a different provider. 
 
 ```typescript
 import { runTurnLoop } from '@bentway/core/turn-loop';
+import { streamJsonSink } from '@bentway/stream-json';
 import { complete, makeAnthropicSerializeRequest } from '@bentway/anthropic';
 
 await runTurnLoop({
   prompt: 'Summarize the latest Anthropic release notes.',
-  emitter: (line) => process.stdout.write(line),
+  // The loop emits neutral events; the sink renders them to stream-json
+  // bytes. Swap in your own sink to project to a different format.
+  emitter: streamJsonSink((line) => process.stdout.write(line)),
 
   complete,
   serializeRequest: makeAnthropicSerializeRequest({
@@ -63,11 +66,11 @@ Running it produces a line-delimited JSON stream you can pipe anywhere:
 
 | package | what it owns |
 |---|---|
-| [`@bentway/core`](packages/core) | turn loop, neutral `Transcript`, tool-call dispatch, stop-reason and retryable classifiers |
+| [`@bentway/core`](packages/core) | turn loop, neutral `Transcript`, neutral event vocabulary, usage accumulator, tool-call dispatch, stop-reason and retryable classifiers |
 | [`@bentway/anthropic`](packages/anthropic) | `/v1/messages` completion port, thinking-config, pricing, request shaper |
 | [`@bentway/openai`](packages/openai) | `/v1/responses` completion port, reasoning-model detection, pricing, prompt-cache-key, request shaper |
 | [`@bentway/llama`](packages/llama) | OpenAI-compatible `/v1/chat/completions` port for llama.cpp and llama-server |
-| [`@bentway/stream-json`](packages/stream-json) | event emitter, builders, usage accumulator, the projection itself |
+| [`@bentway/stream-json`](packages/stream-json) | stream-json sink that renders neutral events to line-delimited JSON; builders for direct use |
 
 Each package has its own README with a focused, runnable usage example.
 

@@ -5,7 +5,7 @@ on:
     tags: ['v*']
 
 permissions:
-  contents: read
+  contents: write          # for gh release create
   id-token: write          # enables npm OIDC trusted publishing + provenance
 
 jobs:
@@ -29,8 +29,30 @@ jobs:
       - name: Pack + publish (topological)
         run: |
           mkdir -p /tmp/bw-out
-          # stream-json -> core -> ports, to avoid a dependent-404 window.
-          for p in stream-json core anthropic openai llama; do
+          # core -> stream-json -> ports, to avoid a dependent-404 window.
+          for p in core stream-json anthropic openai llama; do
             ( cd "packages/$p" && pnpm pack --pack-destination /tmp/bw-out )
             npm publish /tmp/bw-out/bentway-$p-*.tgz --access public
           done
+      # Last step: a failed publish aborts before a release is created.
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Extract the section for the tagged version from CHANGELOG.md.
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk -v v="$VERSION" '
+            $0 ~ "^## \\[" v "\\]" { f=1; next }
+            f && /^## \[/ { exit }
+            f { print }
+          ' CHANGELOG.md > /tmp/relnotes.md
+          if [ ! -s /tmp/relnotes.md ]; then
+            echo "no CHANGELOG section for $VERSION — falling back to auto-generated notes" >&2
+            gh release create "${GITHUB_REF_NAME}" \
+              --title "${GITHUB_REF_NAME}" \
+              --generate-notes
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              --title "${GITHUB_REF_NAME}" \
+              --notes-file /tmp/relnotes.md
+          fi

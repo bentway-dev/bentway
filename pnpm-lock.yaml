@@ -54,10 +54,6 @@ importers:
         version: 5.9.3
 
   packages/core:
-    dependencies:
-      '@bentway/stream-json':
-        specifier: workspace:*
-        version: link:../stream-json
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -96,6 +92,10 @@ importers:
         version: 5.9.3
 
   packages/stream-json:
+    dependencies:
+      '@bentway/core':
+        specifier: workspace:*
+        version: link:../core
     devDependencies:
       '@types/node':
         specifier: ^22.0.0

@@ -1,7 +1,10 @@
 // The turn loop: drive a session of completion requests to a terminal stop
-// and emit a stream-json event log along the way. The loop is provider-
-// neutral; every provider- or host-specific behavior enters via the
-// injected `ctx` (see `runTurnLoop` below).
+// and emit a neutral event log along the way. The loop is provider- and
+// format-neutral; every provider- or host-specific behavior enters via the
+// injected `ctx` (see `runTurnLoop` below). The `emitter` ctx field is a
+// sink consuming neutral events from `./events.mjs`; the host wires a
+// renderer (e.g. `@bentway/stream-json`'s `streamJsonSink`) to project
+// those events to a concrete wire format.
 //
 // What the loop does each turn:
 //   1. emit `api_call_start`
@@ -22,9 +25,12 @@
 //     id?, textChunks? }` — and the loop reads those fields directly)
 //   - own prompt or intervention text (those live in host policy hooks)
 //
-// Imports only @bentway/core/* and @bentway/stream-json. No host coupling.
+// Imports only @bentway/core/*. The loop emits neutral events (see
+// ./events.mjs) to the injected `emitter`; rendering to any wire format
+// (stream-json, etc.) lives in a host-wired sink.
 
-import { emit, accumulateUsage, buildResultEvent, assistantTextEvent, assistantToolUseEvent, toolResultEvent } from '@bentway/stream-json';
+import * as events from './events.mjs';
+import { accumulateUsage } from './usage.mjs';
 import { executeFunctionCall } from './tool-exec.mjs';
 import * as transcript from './transcript.mjs';
 
@@ -44,7 +50,7 @@ export async function runTurnLoop(ctx) {
     emitter,
     // Stamped into every emitted `result` event; also forwarded to the WIP-
     // preservation hook. `resultEventExtras` carries provider-shaped knobs
-    // accepted by `buildResultEvent` ({ costSemantics?, toolCapability?,
+    // accepted by `events.result(…)` ({ costSemantics?, toolCapability?,
     // requestedModel? }); spread into each call so the loop owns no
     // provider-specific literals. Defaults to `{}`.
     provider,
@@ -131,7 +137,7 @@ export async function runTurnLoop(ctx) {
     //   emitProviderText({ payload, emitter, text })
     //     Replaces the loop's single text emit when the provider needs
     //     incremental emission. Omitted → the loop emits
-    //     `assistantTextEvent(text, payload.usage)`.
+    //     `events.assistantText({ text, usage: payload.usage })`.
     maybeBuildBadCompletionRetry,
     // Pre-numTurns++ request-failed terminal seam. Consulted after
     // `api_call_end` but BEFORE incrementing `numTurns`, so the emitted
@@ -182,21 +188,21 @@ export async function runTurnLoop(ctx) {
   function emitDiag(stopReason) {
     if (_diag.done) return;
     _diag.done = true;
-    emit({
-      type: 'system', subtype: 'session_diagnostics',
-      total_turns: numTurns,
-      total_tokens: (totalUsage.input_tokens || 0) + (totalUsage.output_tokens || 0),
-      input_tokens: totalUsage.input_tokens || 0,
-      output_tokens: totalUsage.output_tokens || 0,
-      tool_histogram: _diag.toolHist,
-      max_tool_latency_ms: _diag.maxToolMs,
-      // Extras land between max_tool_latency_ms and stuck_loop_trips so the
-      // overall field order stays stable across hosts.
-      ...(typeof diagnosticsExtras === 'function' ? diagnosticsExtras() : {}),
-      stuck_loop_trips: _diag.loops,
-      stop_reason: stopReason,
-      duration_api_ms: lastDurationMs,
-    }, emitter);
+    emitter(events.sessionDiagnostics({
+      totalTurns: numTurns,
+      totalTokens: (totalUsage.input_tokens || 0) + (totalUsage.output_tokens || 0),
+      inputTokens: totalUsage.input_tokens || 0,
+      outputTokens: totalUsage.output_tokens || 0,
+      toolHistogram: _diag.toolHist,
+      maxToolLatencyMs: _diag.maxToolMs,
+      // Extras carry diagnosticsExtras()'s output verbatim; the sink spreads
+      // them between max_tool_latency_ms and stuck_loop_trips for byte-stable
+      // session_diagnostics field order.
+      extras: typeof diagnosticsExtras === 'function' ? diagnosticsExtras() : undefined,
+      stuckLoopTrips: _diag.loops,
+      stopReason,
+      durationApiMs: lastDurationMs,
+    }));
   }
 
   try {
@@ -205,7 +211,7 @@ export async function runTurnLoop(ctx) {
 
     // Emit api_call_start so a watching executor sees activity even during
     // long reasoning turns (otherwise an idle-timeout could trip).
-    emit({ type: 'system', subtype: 'api_call_start', turn: numTurns + 1 }, emitter);
+    emitter(events.apiCallStart({ turn: numTurns + 1 }));
 
     let result;
     // fatalAttempts: attempt count at exhaustion, fed to fatalApiResultText.
@@ -233,14 +239,12 @@ export async function runTurnLoop(ctx) {
           && attempt < MAX_API_RETRIES
         ) {
           const delay = RETRY_BASE_DELAY_MS * Math.pow(4, attempt);
-          emit({
-            type: 'system',
-            subtype: 'api_retry',
+          emitter(events.apiRetry({
             attempt: attempt + 1,
             maxRetries: MAX_API_RETRIES,
             delayMs: delay,
             error: result.message || 'api error',
-          }, emitter);
+          }));
           await new Promise(r => setTimeout(r, delay));
           continue;
         }
@@ -261,7 +265,7 @@ export async function runTurnLoop(ctx) {
       // (signalled by the `requestFailed` flag). Fetch-level throws and
       // unexpected throws skip it.
       if (!unexpectedThrow && result?.requestFailed) {
-        emit({ type: 'system', subtype: 'api_call_end', turn: numTurns + 1, durationMs: Date.now() - startedAt }, emitter);
+        emitter(events.apiCallEnd({ turn: numTurns + 1, durationMs: Date.now() - startedAt }));
       }
       // Optional host hook to claim the transport error before the unified
       // fatal path runs. Reads `payload.kind === 'error' && payload.requestFailed`.
@@ -270,33 +274,30 @@ export async function runTurnLoop(ctx) {
         if (requestFailed) {
           const totalCostUsd = computeTotalCostUsd(model, totalUsage);
           emitDiag(requestFailed.stopReason);
-          emit(
-            buildResultEvent({
-              model,
-              provider,
-              ...resultEventExtras,
-              usage: totalUsage,
-              totalCostUsd,
-              durationApiMs: lastDurationMs + (Date.now() - startedAt),
-              numTurns,
-              resultText: requestFailed.resultText,
-              stopReason: requestFailed.stopReason,
-              subtype: requestFailed.subtype,
-              systemPromptBytes,
-              mcpServerCount,
-              mcpServerBreakdown,
-              toolCallCount,
-              mcpToolCallCount,
-              toolResultCount,
-            }),
-            emitter,
-          );
+          emitter(events.result({
+            model,
+            provider,
+            ...resultEventExtras,
+            usage: totalUsage,
+            totalCostUsd,
+            durationApiMs: lastDurationMs + (Date.now() - startedAt),
+            numTurns,
+            resultText: requestFailed.resultText,
+            stopReason: requestFailed.stopReason,
+            subtype: requestFailed.subtype,
+            systemPromptBytes,
+            mcpServerCount,
+            mcpServerBreakdown,
+            toolCallCount,
+            mcpToolCallCount,
+            toolResultCount,
+          }));
           if (requestFailed.preserveTrigger) {
             await preserveDirtyWorkToIsolatedRef({
               commitSubject: requestFailed.preserveCommitSubject ?? 'WIP: runtime preservation',
               trigger: requestFailed.preserveTrigger,
               provider,
-              emitEvent: (event) => emit(event, emitter),
+              emitEvent: emitter,
             });
           }
           return requestFailed.exitCode;
@@ -311,29 +312,26 @@ export async function runTurnLoop(ctx) {
       const stopReasonForResult = unexpectedThrow ? 'error' : (result.stopReason || 'error');
       const totalCostUsd = computeTotalCostUsd(model, totalUsage);
       emitDiag(stopReasonForResult);
-      emit(
-        buildResultEvent({
-          model,
-          provider,
-          ...resultEventExtras,
-          usage: totalUsage,
-          totalCostUsd,
-          durationApiMs: lastDurationMs + (Date.now() - startedAt),
-          numTurns,
-          resultText: typeof fatalApiResultText === 'function'
-            ? fatalApiResultText({ err: errRef, maxRetries: MAX_API_RETRIES, attempts: fatalAttempts })
-            : `API error after ${MAX_API_RETRIES} retries: ${errRef.message || String(errRef)}`,
-          stopReason: stopReasonForResult,
-          subtype: 'error',
-          systemPromptBytes,
-          mcpServerCount,
-          mcpServerBreakdown,
-          toolCallCount,
-          mcpToolCallCount,
-          toolResultCount,
-        }),
-        emitter,
-      );
+      emitter(events.result({
+        model,
+        provider,
+        ...resultEventExtras,
+        usage: totalUsage,
+        totalCostUsd,
+        durationApiMs: lastDurationMs + (Date.now() - startedAt),
+        numTurns,
+        resultText: typeof fatalApiResultText === 'function'
+          ? fatalApiResultText({ err: errRef, maxRetries: MAX_API_RETRIES, attempts: fatalAttempts })
+          : `API error after ${MAX_API_RETRIES} retries: ${errRef.message || String(errRef)}`,
+        stopReason: stopReasonForResult,
+        subtype: 'error',
+        systemPromptBytes,
+        mcpServerCount,
+        mcpServerBreakdown,
+        toolCallCount,
+        mcpToolCallCount,
+        toolResultCount,
+      }));
       // Preserve only when a trigger is set. The default ('api_error')
       // preserves; a host can pass null to suppress preservation.
       if (fatalApiPreserveTrigger) {
@@ -341,13 +339,13 @@ export async function runTurnLoop(ctx) {
           commitSubject: 'WIP: api error — runtime preservation',
           trigger: fatalApiPreserveTrigger,
           provider,
-          emitEvent: (event) => emit(event, emitter),
+          emitEvent: emitter,
         });
       }
       return 1;
     }
 
-    emit({ type: 'system', subtype: 'api_call_end', turn: numTurns + 1, durationMs: Date.now() - startedAt }, emitter);
+    emitter(events.apiCallEnd({ turn: numTurns + 1, durationMs: Date.now() - startedAt }));
 
     previousResponseId = result.id;
     numTurns += 1;
@@ -366,29 +364,26 @@ export async function runTurnLoop(ctx) {
     if (effectiveMaxTurns && numTurns >= effectiveMaxTurns) {
       const totalCostUsd = computeTotalCostUsd(model, totalUsage);
       emitDiag('max_turns');
-      emit(
-        buildResultEvent({
-          model,
-          provider,
-          ...resultEventExtras,
-          usage: totalUsage,
-          totalCostUsd,
-          durationApiMs: lastDurationMs,
-          numTurns,
-          resultText: typeof maxTurnsResultText === 'function'
-            ? maxTurnsResultText()
-            : (lastText || result.text || ''),
-          stopReason: 'max_turns',
-          subtype: maxTurnsSubtype,
-          systemPromptBytes,
-          mcpServerCount,
-          mcpServerBreakdown,
-          toolCallCount,
-          mcpToolCallCount,
-          toolResultCount,
-        }),
-        emitter,
-      );
+      emitter(events.result({
+        model,
+        provider,
+        ...resultEventExtras,
+        usage: totalUsage,
+        totalCostUsd,
+        durationApiMs: lastDurationMs,
+        numTurns,
+        resultText: typeof maxTurnsResultText === 'function'
+          ? maxTurnsResultText()
+          : (lastText || result.text || ''),
+        stopReason: 'max_turns',
+        subtype: maxTurnsSubtype,
+        systemPromptBytes,
+        mcpServerCount,
+        mcpServerBreakdown,
+        toolCallCount,
+        mcpToolCallCount,
+        toolResultCount,
+      }));
       return 0;
     }
 
@@ -413,27 +408,24 @@ export async function runTurnLoop(ctx) {
       if (badCompletion && badCompletion.kind === 'fatal') {
         const totalCostUsd = computeTotalCostUsd(model, totalUsage);
         emitDiag(badCompletion.stopReason);
-        emit(
-          buildResultEvent({
-            model,
-            provider,
-            ...resultEventExtras,
-            usage: totalUsage,
-            totalCostUsd,
-            durationApiMs: lastDurationMs,
-            numTurns,
-            resultText: badCompletion.resultText,
-            stopReason: badCompletion.stopReason,
-            subtype: badCompletion.subtype,
-            systemPromptBytes,
-            mcpServerCount,
-            mcpServerBreakdown,
-            toolCallCount,
-            mcpToolCallCount,
-            toolResultCount,
-          }),
-          emitter,
-        );
+        emitter(events.result({
+          model,
+          provider,
+          ...resultEventExtras,
+          usage: totalUsage,
+          totalCostUsd,
+          durationApiMs: lastDurationMs,
+          numTurns,
+          resultText: badCompletion.resultText,
+          stopReason: badCompletion.stopReason,
+          subtype: badCompletion.subtype,
+          systemPromptBytes,
+          mcpServerCount,
+          mcpServerBreakdown,
+          toolCallCount,
+          mcpToolCallCount,
+          toolResultCount,
+        }));
         // Preserve dirty work on fatal bad-completion paths when a trigger
         // is set.
         if (badCompletion.preserveTrigger) {
@@ -441,7 +433,7 @@ export async function runTurnLoop(ctx) {
             commitSubject: badCompletion.preserveCommitSubject ?? 'WIP: runtime preservation',
             trigger: badCompletion.preserveTrigger,
             provider,
-            emitEvent: (event) => emit(event, emitter),
+            emitEvent: emitter,
           });
         }
         return badCompletion.exitCode;
@@ -452,21 +444,21 @@ export async function runTurnLoop(ctx) {
     totalUsage = accumulateUsage(totalUsage, result.usage);
     lastDurationMs += Date.now() - startedAt;
 
-    emit({
-      type: 'system', subtype: 'turn_tokens', turn: numTurns,
-      prompt_tokens: result.usage?.input_tokens || 0,
-      completion_tokens: result.usage?.output_tokens || 0,
-      cumulative_tokens: (totalUsage.input_tokens || 0) + (totalUsage.output_tokens || 0),
-    }, emitter);
+    emitter(events.turnTokens({
+      turn: numTurns,
+      promptTokens: result.usage?.input_tokens || 0,
+      completionTokens: result.usage?.output_tokens || 0,
+      cumulativeTokens: (totalUsage.input_tokens || 0) + (totalUsage.output_tokens || 0),
+    }));
 
     // Text emission. `lastText` tracking is provider-neutral; the emission
-    // itself is injectable. Omitted → emit a single assistantTextEvent here.
+    // itself is injectable. Omitted → emit a single assistantText event here.
     const text = result.text;
     if (text) lastText = text;
     if (typeof emitProviderText === 'function') {
       emitProviderText({ payload: result, emitter, text });
     } else if (text) {
-      emit(assistantTextEvent(text, result.usage), emitter);
+      emitter(events.assistantText({ text, usage: result.usage }));
     }
 
     const calls = result.calls;
@@ -549,52 +541,46 @@ export async function runTurnLoop(ctx) {
         if (decision && decision.kind === 'terminate') {
           const totalCostUsd = computeTotalCostUsd(model, totalUsage);
           emitDiag(decision.stopReason);
-          emit(
-            buildResultEvent({
-              model,
-              provider,
-              ...resultEventExtras,
-              usage: totalUsage,
-              totalCostUsd,
-              durationApiMs: lastDurationMs,
-              numTurns,
-              resultText: decision.resultText,
-              stopReason: decision.stopReason,
-              subtype: decision.subtype,
-              systemPromptBytes,
-              mcpServerCount,
-              mcpServerBreakdown,
-              toolCallCount,
-              mcpToolCallCount,
-              toolResultCount,
-            }),
-            emitter,
-          );
+          emitter(events.result({
+            model,
+            provider,
+            ...resultEventExtras,
+            usage: totalUsage,
+            totalCostUsd,
+            durationApiMs: lastDurationMs,
+            numTurns,
+            resultText: decision.resultText,
+            stopReason: decision.stopReason,
+            subtype: decision.subtype,
+            systemPromptBytes,
+            mcpServerCount,
+            mcpServerBreakdown,
+            toolCallCount,
+            mcpToolCallCount,
+            toolResultCount,
+          }));
           return decision.exitCode;
         }
         // falsy decision → fall through to the end_turn terminal below.
       }
       const totalCostUsd = computeTotalCostUsd(model, totalUsage);
       emitDiag('end_turn');
-      emit(
-        buildResultEvent({
-          model,
-          provider,
-          ...resultEventExtras,
-          usage: totalUsage,
-          totalCostUsd,
-          durationApiMs: lastDurationMs,
-          numTurns,
-          resultText: lastText,
-          systemPromptBytes,
-          mcpServerCount,
-          mcpServerBreakdown,
-          toolCallCount,
-          mcpToolCallCount,
-          toolResultCount,
-        }),
-        emitter,
-      );
+      emitter(events.result({
+        model,
+        provider,
+        ...resultEventExtras,
+        usage: totalUsage,
+        totalCostUsd,
+        durationApiMs: lastDurationMs,
+        numTurns,
+        resultText: lastText,
+        systemPromptBytes,
+        mcpServerCount,
+        mcpServerBreakdown,
+        toolCallCount,
+        mcpToolCallCount,
+        toolResultCount,
+      }));
       return 0;
     }
 
@@ -629,7 +615,7 @@ export async function runTurnLoop(ctx) {
     for (const call of calls) {
       toolCallCount += 1;
       if (typeof call.name === 'string' && call.name.startsWith('mcp__')) mcpToolCallCount += 1;
-      emit(assistantToolUseEvent(call, usageEmittedThisTurn ? undefined : result.usage), emitter);
+      emitter(events.assistantToolUse({ call, usage: usageEmittedThisTurn ? undefined : result.usage }));
       usageEmittedThisTurn = true;
       const _t0 = Date.now();
       try {
@@ -637,8 +623,8 @@ export async function runTurnLoop(ctx) {
         const _dt = Date.now() - _t0;
         const serialized = typeof output === 'string' ? output : JSON.stringify(output);
         toolResultCount += 1;
-        emit(toolResultEvent({ callId: call.callId, output }), emitter);
-        emit({ type: 'system', subtype: 'tool_latency', tool: call.name, duration_ms: _dt, output_bytes: serialized.length }, emitter);
+        emitter(events.toolResult({ callId: call.callId, output }));
+        emitter(events.toolLatency({ tool: call.name, durationMs: _dt, outputBytes: serialized.length }));
         if (typeof recordToolInvocation === 'function') {
           recordToolInvocation(_diag.toolHist, call.name, _dt);
         } else {
@@ -656,8 +642,8 @@ export async function runTurnLoop(ctx) {
         const _dt = Date.now() - _t0;
         const message = error instanceof Error ? error.message : String(error);
         toolResultCount += 1;
-        emit(toolResultEvent({ callId: call.callId, output: message, isError: true }), emitter);
-        emit({ type: 'system', subtype: 'tool_latency', tool: call.name, duration_ms: _dt, output_bytes: message.length, is_error: true }, emitter);
+        emitter(events.toolResult({ callId: call.callId, output: message, isError: true }));
+        emitter(events.toolLatency({ tool: call.name, durationMs: _dt, outputBytes: message.length, isError: true }));
         if (typeof recordToolInvocation === 'function') {
           recordToolInvocation(_diag.toolHist, call.name, _dt);
         } else {
@@ -678,27 +664,24 @@ export async function runTurnLoop(ctx) {
           if (toolErrorResult) {
             const totalCostUsd = computeTotalCostUsd(model, totalUsage);
             emitDiag(toolErrorResult.stopReason);
-            emit(
-              buildResultEvent({
-                model,
-                provider,
-                ...resultEventExtras,
-                usage: totalUsage,
-                totalCostUsd,
-                durationApiMs: lastDurationMs,
-                numTurns,
-                resultText: toolErrorResult.resultText,
-                stopReason: toolErrorResult.stopReason,
-                subtype: toolErrorResult.subtype,
-                systemPromptBytes,
-                mcpServerCount,
-                mcpServerBreakdown,
-                toolCallCount,
-                mcpToolCallCount,
-                toolResultCount,
-              }),
-              emitter,
-            );
+            emitter(events.result({
+              model,
+              provider,
+              ...resultEventExtras,
+              usage: totalUsage,
+              totalCostUsd,
+              durationApiMs: lastDurationMs,
+              numTurns,
+              resultText: toolErrorResult.resultText,
+              stopReason: toolErrorResult.stopReason,
+              subtype: toolErrorResult.subtype,
+              systemPromptBytes,
+              mcpServerCount,
+              mcpServerBreakdown,
+              toolCallCount,
+              mcpToolCallCount,
+              toolResultCount,
+            }));
             return toolErrorResult.exitCode;
           }
         }
@@ -741,27 +724,24 @@ export async function runTurnLoop(ctx) {
       const totalCostUsd = computeTotalCostUsd(model, totalUsage);
       _diag.loops += 1;
       emitDiag('tool_loop');
-      emit(
-        buildResultEvent({
-          model,
-          provider,
-          ...resultEventExtras,
-          usage: totalUsage,
-          totalCostUsd,
-          durationApiMs: lastDurationMs,
-          numTurns,
-          resultText: testFailureLoopResult,
-          stopReason: 'tool_loop',
-          subtype: 'error',
-          systemPromptBytes,
-          mcpServerCount,
-          mcpServerBreakdown,
-          toolCallCount,
-          mcpToolCallCount,
-          toolResultCount,
-        }),
-        emitter,
-      );
+      emitter(events.result({
+        model,
+        provider,
+        ...resultEventExtras,
+        usage: totalUsage,
+        totalCostUsd,
+        durationApiMs: lastDurationMs,
+        numTurns,
+        resultText: testFailureLoopResult,
+        stopReason: 'tool_loop',
+        subtype: 'error',
+        systemPromptBytes,
+        mcpServerCount,
+        mcpServerBreakdown,
+        toolCallCount,
+        mcpToolCallCount,
+        toolResultCount,
+      }));
       return 1;
     }
 
@@ -775,27 +755,24 @@ export async function runTurnLoop(ctx) {
       const totalCostUsd = computeTotalCostUsd(model, totalUsage);
       _diag.loops += 1;
       emitDiag('tool_loop');
-      emit(
-        buildResultEvent({
-          model,
-          provider,
-          ...resultEventExtras,
-          usage: totalUsage,
-          totalCostUsd,
-          durationApiMs: lastDurationMs,
-          numTurns,
-          resultText: noProgressLoopResult,
-          stopReason: 'tool_loop',
-          subtype: 'error',
-          systemPromptBytes,
-          mcpServerCount,
-          mcpServerBreakdown,
-          toolCallCount,
-          mcpToolCallCount,
-          toolResultCount,
-        }),
-        emitter,
-      );
+      emitter(events.result({
+        model,
+        provider,
+        ...resultEventExtras,
+        usage: totalUsage,
+        totalCostUsd,
+        durationApiMs: lastDurationMs,
+        numTurns,
+        resultText: noProgressLoopResult,
+        stopReason: 'tool_loop',
+        subtype: 'error',
+        systemPromptBytes,
+        mcpServerCount,
+        mcpServerBreakdown,
+        toolCallCount,
+        mcpToolCallCount,
+        toolResultCount,
+      }));
       return 1;
     }
 

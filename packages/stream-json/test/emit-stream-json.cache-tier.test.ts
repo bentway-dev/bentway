@@ -10,7 +10,8 @@
 // `input_tokens_details` with no `cache_creation_tokens` key → projection
 // reads 0 → accumulator carries 0 → `buildResultEvent` emits 0.
 import { describe, it, expect } from 'vitest';
-import { projectUsageForStreamJson, accumulateUsage, buildResultEvent } from '@bentway/stream-json';
+import { projectUsageForStreamJson, buildResultEvent } from '@bentway/stream-json';
+import { accumulateUsage } from '@bentway/core/usage';
 
 type ResultEvent = {
   type: string;

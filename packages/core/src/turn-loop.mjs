@@ -35,6 +35,36 @@ import { executeFunctionCall } from './tool-exec.mjs';
 import * as transcript from './transcript.mjs';
 
 /**
+ * Resumable session state at a turn boundary — pure data, JSON-round-trippable.
+ *
+ * Emitted by `ctx.onTurnComplete` at the bottom of each productive turn and
+ * passed back via `ctx.initialState` to resume a loop in a fresh process.
+ *
+ * Captured at the clean boundary AFTER the assistant + tool_result messages
+ * for the just-completed turn have been appended to the Transcript and
+ * `numTurns` / `totalUsage` / counters reflect that turn — so a checkpoint
+ * means "completed N turns; next turn is N+1." Restoring `totalUsage` keeps
+ * a host's cost kill-switch cumulative across the resume boundary; restoring
+ * `numTurns` keeps the turn-limit honest (no fresh budget on resume).
+ * `previousResponseId` is restored best-effort — provider-side response
+ * chaining is process-local, so a stale/absent id degrades to whatever
+ * fallback the host's `serializeRequest` does (typically full transcript
+ * re-serialization); the loop never errors on it.
+ *
+ * @typedef {object} Checkpoint
+ * @property {{ messages: Array<object> }} transcript      The neutral Transcript.
+ * @property {string} [previousResponseId]                  Provider response-chaining id (e.g. OpenAI Responses).
+ * @property {number} numTurns                              Turns completed before the checkpoint.
+ * @property {Record<string, number>} totalUsage            Cumulative token usage.
+ * @property {string} lastText                              Last assistant text seen (max_turns result fallback).
+ * @property {number} toolCallCount                         Cumulative tool_use count.
+ * @property {number} mcpToolCallCount                      Cumulative MCP tool_use count.
+ * @property {number} toolResultCount                       Cumulative tool_result count.
+ * @property {boolean} bareBailIntervened                   Bare-bail one-shot flag.
+ * @property {number} noToolCallStreak                      No-tool-call streak counter.
+ */
+
+/**
  * Drive the turn loop to a terminal stop and return the session exit code.
  *
  * Returns 0 on a clean terminal (end_turn / max_turns) and 1 on a fatal or
@@ -162,27 +192,68 @@ export async function runTurnLoop(ctx) {
     // Optional observation seam. Invoked with the final Transcript when the
     // loop exits (any terminal path). Used by tests; no-op in production.
     onShadowTranscript,
+    // ── Checkpoint / resume seams ─────────────────────────────────────────
+    // `initialState` (typeof Checkpoint or omitted) — when present, seed the
+    // loop's resumable state from it instead of building fresh from `prompt`.
+    // The seeded `transcript` replaces the initial user-prompt message; the
+    // restored counters (`numTurns`, `totalUsage`, `toolCallCount` etc.) keep
+    // turn-budget and cost-kill-switch decisions cumulative across the resume
+    // boundary. `previousResponseId` is restored best-effort — stale/absent
+    // is not an error (the host's `serializeRequest` falls back to whatever
+    // re-serialization shape it prefers).
+    //
+    // `onTurnComplete?(checkpoint)` — invoked at the bottom of each
+    // productive turn iteration (the clean boundary — Transcript consistent,
+    // assistant + tool_result messages appended for this turn). Passes the
+    // full Checkpoint; the host owns persistence cadence and storage.
+    initialState,
+    /** @type {((c: Checkpoint) => void) | undefined} */
+    onTurnComplete,
   } = ctx;
 
   let previousResponseId;
   let input = prompt;
-  // Owned Transcript, seeded with the initial user prompt. Built in parallel
-  // with each turn; never read to drive the request (the host's
+  // Owned Transcript. Fresh: seeded with the initial user prompt. Resumed:
+  // restored from `initialState.transcript` — the seeded shape replaces the
+  // first user message (which is already inside the seeded transcript). Built
+  // in parallel with each turn; never read to drive the request (the host's
   // `serializeRequest` chooses whether to consume it).
-  let shadowTranscript = transcript.appendMessage(
-    transcript.createTranscript(),
-    transcript.message('user', [transcript.text(prompt)]),
-  );
-  let numTurns = 0;
-  let totalUsage = {};
+  let shadowTranscript;
+  let numTurns;
+  let totalUsage;
   let lastDurationMs = 0;
-  let lastText = '';
-  let toolCallCount = 0;
-  let mcpToolCallCount = 0;
-  let toolResultCount = 0;
-  let bareBailIntervened = false;
+  let lastText;
+  let toolCallCount;
+  let mcpToolCallCount;
+  let toolResultCount;
+  let bareBailIntervened;
   // Cross-turn counter used only by the no-tool-call policy seam.
-  let noToolCallStreak = 0;
+  let noToolCallStreak;
+  if (initialState) {
+    shadowTranscript = initialState.transcript;
+    previousResponseId = initialState.previousResponseId;
+    numTurns = initialState.numTurns ?? 0;
+    totalUsage = initialState.totalUsage ?? {};
+    lastText = initialState.lastText ?? '';
+    toolCallCount = initialState.toolCallCount ?? 0;
+    mcpToolCallCount = initialState.mcpToolCallCount ?? 0;
+    toolResultCount = initialState.toolResultCount ?? 0;
+    bareBailIntervened = initialState.bareBailIntervened ?? false;
+    noToolCallStreak = initialState.noToolCallStreak ?? 0;
+  } else {
+    shadowTranscript = transcript.appendMessage(
+      transcript.createTranscript(),
+      transcript.message('user', [transcript.text(prompt)]),
+    );
+    numTurns = 0;
+    totalUsage = {};
+    lastText = '';
+    toolCallCount = 0;
+    mcpToolCallCount = 0;
+    toolResultCount = 0;
+    bareBailIntervened = false;
+    noToolCallStreak = 0;
+  }
 
   const _diag = { toolHist: {}, maxToolMs: 0, loops: 0, done: false };
   function emitDiag(stopReason) {
@@ -778,6 +849,27 @@ export async function runTurnLoop(ctx) {
 
     // Next-turn input: the tool outputs, plus any post-tool observer delta.
     input = postToolObserverInput ?? outputs;
+
+    // Turn-boundary checkpoint seam. The clean boundary: assistant turn +
+    // tool_result user message are both appended to the Transcript, counters
+    // and cumulative usage reflect this turn, and no tool call is pending.
+    // Fires only on productive turns (calls.length > 0); terminal paths
+    // (end_turn / max_turns / fatal) emit their own `result` and return
+    // before reaching here. No-op when the hook is absent.
+    if (typeof onTurnComplete === 'function') {
+      onTurnComplete({
+        transcript: shadowTranscript,
+        previousResponseId,
+        numTurns,
+        totalUsage,
+        lastText,
+        toolCallCount,
+        mcpToolCallCount,
+        toolResultCount,
+        bareBailIntervened,
+        noToolCallStreak,
+      });
+    }
   }
   } finally {
     // Hand the final Transcript to the optional observer on every exit

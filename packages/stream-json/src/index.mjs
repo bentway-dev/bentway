@@ -265,6 +265,17 @@ export function streamJsonSink(writer = process.stdout.write.bind(process.stdout
         }), writer);
       case 'result':
         return emit(buildResultEvent(event), writer);
+      case 'customEvent':
+        // Host-custom passthrough. `...event.fields` preserves insertion
+        // order, so the rendered line matches whatever literal a host emitted
+        // before the inversion (byte-identical to the pre-customEvent shape).
+        return emit({ type: 'system', subtype: event.subtype, ...event.fields }, writer);
+      default:
+        throw new Error(
+          `streamJsonSink: unrecognized event tag ${JSON.stringify(event?.tag)} — ` +
+          `wrap host-custom events with customEvent({ subtype, ...fields }). ` +
+          `event=${JSON.stringify(event)}`,
+        );
     }
   };
 }

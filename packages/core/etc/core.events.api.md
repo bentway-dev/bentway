@@ -59,6 +59,15 @@ export function assistantToolUse(input: {
 };
 
 // @public (undocumented)
+export function customEvent(input: {
+    subtype: string;
+} & Record<string, unknown>): {
+    tag: "customEvent";
+    subtype: string;
+    fields: Record<string, unknown>;
+};
+
+// @public (undocumented)
 export function result(fields: any): any;
 
 // @public (undocumented)

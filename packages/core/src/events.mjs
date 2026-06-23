@@ -64,3 +64,16 @@ export const sessionDiagnostics = ({
 
 export const result = (fields) =>
   ({ tag: 'result', ...fields });
+
+/**
+ * Host-custom passthrough event. Carries an opaque `subtype` plus arbitrary
+ * fields; a sink renders it however that format represents a custom/system
+ * event (the stream-json sink renders it to `{ type: 'system', subtype,
+ * ...fields }`). Use this for host- or consumer-specific events that are not
+ * part of the typed kernel vocabulary.
+ *
+ * @param {{ subtype: string } & Record<string, unknown>} arg
+ * @returns {{ tag: 'customEvent', subtype: string, fields: Record<string, unknown> }}
+ */
+export const customEvent = ({ subtype, ...fields }) =>
+  ({ tag: 'customEvent', subtype, fields });

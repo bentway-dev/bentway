@@ -1,6 +1,6 @@
 {
   "name": "@bentway/llama",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "llama.cpp / llama-server completion port for the bentway kernel",
   "keywords": [
     "bentway",

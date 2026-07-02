@@ -168,6 +168,23 @@ export async function runTurnLoop(ctx) {
     //     Replaces the loop's single text emit when the provider needs
     //     incremental emission. Omitted → the loop emits
     //     `events.assistantText({ text, usage: payload.usage })`.
+    //
+    //   maybeBuildPreToolIntervention(calls, toolLoopState)
+    //     Pre-tool-execution policy seam. Consulted BEFORE executing any
+    //     tool call this turn (after the existing edit-test-fail guard).
+    //     Returns a string intervention message to block execution (same
+    //     shape as maybeBuildEditTestFailIntervention), or falsy to proceed.
+    //     Used by the host to inject additional pre-execution gates (e.g.
+    //     TDD phase enforcement) without overloading existing hooks.
+    maybeBuildPreToolIntervention,
+    //
+    //   recordPostToolExec(calls, outputs, toolLoopState)
+    //     Post-tool-execution recording seam. Called after
+    //     recordBashTestFailures. Mutates toolLoopState in place; no return
+    //     value consumed. Used by the host to inject additional post-exec
+    //     observers (e.g. TDD phase state tracking) without wrapping
+    //     recordBashTestFailures.
+    recordPostToolExec,
     maybeBuildBadCompletionRetry,
     // Pre-numTurns++ request-failed terminal seam. Consulted after
     // `api_call_end` but BEFORE incrementing `numTurns`, so the emitted
@@ -679,6 +696,29 @@ export async function runTurnLoop(ctx) {
       continue;
     }
 
+    // Pre-tool-execution policy seam: an optional host-injected gate that
+    // runs after the edit-test-fail guard. Same blocking shape — returns a
+    // string intervention to short-circuit all tool calls, or falsy to
+    // proceed. typeof-guarded so omitting the hook is a no-op.
+    if (typeof maybeBuildPreToolIntervention === 'function') {
+      const preToolIntervention = maybeBuildPreToolIntervention(calls, toolLoopState);
+      if (preToolIntervention) {
+        input = calls.map((call) => ({
+          type: 'function_call_output',
+          call_id: call.callId,
+          output: preToolIntervention,
+        }));
+        shadowTranscript = transcript.appendMessage(
+          shadowTranscript,
+          transcript.message(
+            'user',
+            calls.map((call) => transcript.toolResult(call.callId, preToolIntervention)),
+          ),
+        );
+        continue;
+      }
+    }
+
     const outputs = [];
     const shadowToolResults = []; // tool_result blocks for the Transcript
     let allToolResultsErrored = true;
@@ -787,6 +827,13 @@ export async function runTurnLoop(ctx) {
 
     // Tool-loop guard, post-execution: track Bash command success/failure.
     recordBashTestFailures(calls, outputs, toolLoopState);
+
+    // Post-tool-execution recording seam: an optional host-injected observer
+    // called after recordBashTestFailures. Mutates toolLoopState; no return
+    // value consumed. typeof-guarded so omitting the hook is a no-op.
+    if (typeof recordPostToolExec === 'function') {
+      recordPostToolExec(calls, outputs, toolLoopState);
+    }
 
     // Terminal: if interventions are exhausted and a command hits threshold
     // again, the model is unresponsive — exit with tool_loop.
